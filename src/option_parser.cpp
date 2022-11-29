@@ -95,16 +95,18 @@ set_kv_option(const std::string &key_,
 
 static
 void
-set_threads(Config::Write &cfg_,
-            fuse_args     *args_)
+set_fuse_read_threads(Config::Write &cfg_,
+                      fuse_args     *args_)
 {
-  int threads;
+  set_kv_option("read-thread-count",cfg_->fuse_read_thread_count.to_string(),args_);
+}
 
-  threads = l::calculate_thread_count(cfg_->threads);
-
-  cfg_->threads = threads;
-
-  set_kv_option("threads",cfg_->threads.to_string(),args_);
+static
+void
+set_fuse_process_threads(Config::Write &cfg_,
+                         fuse_args     *args_)
+{
+  set_kv_option("process-thread-count",cfg_->fuse_process_thread_count.to_string(),args_);
 }
 
 static
@@ -413,6 +415,7 @@ namespace options
     set_default_options(args_);
     set_fsname(cfg,args_);
     set_subtype(args_);
-    set_threads(cfg,args_);
+    set_fuse_read_threads(cfg,args_);
+    set_fuse_process_threads(cfg,args_);
   }
 }
