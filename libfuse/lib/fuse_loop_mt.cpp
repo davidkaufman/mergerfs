@@ -35,22 +35,26 @@ struct fuse_worker_data_t
 {
   struct fuse_session *se;
   sem_t finished;
+  std::function<void(fuse_worker_data_t*,fuse_session*,fuse_msgbuf_t*)> process_msgbuf;
+  std::function<fuse_msgbuf_t*(void)> msgbuf_allocator;
   std::shared_ptr<ThreadPool> tp;
 };
 
 static
 void*
-fuse_do_work_sync(void *data)
+fuse_do_work(void *data)
 {
   fuse_worker_data_t *wd = (fuse_worker_data_t*)data;
   fuse_session       *se = wd->se;
+  auto               &process_msgbuf = wd->process_msgbuf;
+  auto               &msgbuf_allocator = wd->msgbuf_allocator;
 
   while(!fuse_session_exited(se))
     {
       int res;
       fuse_msgbuf_t *msgbuf;
 
-      msgbuf = msgbuf_alloc();
+      msgbuf = msgbuf_allocator();
 
       pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
       res = se->receive_buf(se,msgbuf);
@@ -68,51 +72,7 @@ fuse_do_work_sync(void *data)
             break;
         }
 
-      se->process_buf(se,msgbuf);
-      msgbuf_free(msgbuf);
-    }
-
-  fuse_session_exit(se);
-  sem_post(&wd->finished);
-
-  return NULL;
-}
-
-static
-void*
-fuse_do_work_async(void *data)
-{
-  fuse_worker_data_t          *wd = (fuse_worker_data_t*)data;
-  fuse_session                *se = wd->se;
-  std::shared_ptr<ThreadPool>  tp = wd->tp;
-
-  while(!fuse_session_exited(se))
-    {
-      int res;
-      fuse_msgbuf_t *msgbuf;
-
-      msgbuf = msgbuf_alloc();
-
-      pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
-      res = se->receive_buf(se,msgbuf);
-      pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
-      switch(res)
-        {
-        case 0:
-          break;
-        case -EINTR:
-        case -EAGAIN:
-        case -ENOENT:
-          continue;
-        default:
-          if(res < 0)
-            break;
-        }
-
-      tp->enqueue_work([se,msgbuf] {
-        se->process_buf(se,msgbuf);
-        msgbuf_free(msgbuf);
-      });
+      process_msgbuf(wd,se,msgbuf);
     }
 
   fuse_session_exit(se);
@@ -177,6 +137,29 @@ calculate_thread_counts(int *read_thread_count_,
   *process_thread_count_ = ::calculate_thread_count(*process_thread_count_);
 }
 
+static
+void
+process_msgbuf_sync(fuse_worker_data_t *wd_,
+                    fuse_session       *se_,
+                    fuse_msgbuf_t      *msgbuf_)
+{
+  se_->process_buf(se_,msgbuf_);
+  msgbuf_free(msgbuf_);
+}
+
+static
+void
+process_msgbuf_async(fuse_worker_data_t *wd_,
+                     fuse_session       *se_,
+                     fuse_msgbuf_t      *msgbuf_)
+{
+  const auto func = [wd_,se_,msgbuf_] {
+    process_msgbuf_sync(wd_,se_,msgbuf_);
+  };
+
+  wd_->tp->enqueue_work(func);
+}
+
 int
 fuse_session_loop_mt(struct fuse_session *se_,
                      const int            raw_read_thread_count_,
@@ -194,17 +177,25 @@ fuse_session_loop_mt(struct fuse_session *se_,
   ::calculate_thread_counts(&read_thread_count,&process_thread_count);
 
   if(process_thread_count > 0)
-    wd.tp = std::make_shared<ThreadPool>(process_thread_count);
+    {
+      wd.tp = std::make_shared<ThreadPool>(process_thread_count);
+      wd.process_msgbuf = process_msgbuf_async;
+    }
+  else
+    {
+      wd.process_msgbuf = process_msgbuf_sync;
+    }
+
+  wd.msgbuf_allocator = ((se_->f->splice_read) ? msgbuf_alloc : msgbuf_alloc_memonly);
+
   wd.se = se_;
   sem_init(&wd.finished,0,0);
-
-  auto func = (wd.tp ? fuse_do_work_async : fuse_do_work_sync);
 
   err = 0;
   for(int i = 0; (i < read_thread_count) && !err; i++)
     {
       pthread_t thread_id;
-      err = fuse_start_thread(&thread_id,func,&wd);
+      err = fuse_start_thread(&thread_id,fuse_do_work,&wd);
       assert(err == 0);
       threads.push_back(thread_id);
     }
