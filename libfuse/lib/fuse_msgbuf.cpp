@@ -92,8 +92,8 @@ msgbuf_alloc_memonly()
 
       msgbuf->pipefd[0] = -1;
       msgbuf->pipefd[1] = -1;
-      msgbuf->mem  = (char*)malloc(rv);
-      msgbuf->size = rv;
+      msgbuf->mem  = (char*)malloc(g_BUFSIZE);
+      msgbuf->size = g_BUFSIZE;
       msgbuf->used = 0;
     }
   else
