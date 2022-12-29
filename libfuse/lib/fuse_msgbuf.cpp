@@ -39,6 +39,12 @@ msgbuf_destroy()
   // TODO: cleanup?
 }
 
+std::size_t
+msgbuf_bufsize()
+{
+  return g_BUFSIZE;
+}
+
 void
 msgbuf_bufsize(const std::size_t size_)
 {
@@ -60,6 +66,32 @@ msgbuf_alloc()
       assert(rv == 0);
       rv = fcntl(msgbuf->pipefd[0],F_SETPIPE_SZ,g_BUFSIZE);
       assert(rv > 0);
+      msgbuf->mem  = (char*)malloc(rv);
+      msgbuf->size = rv;
+      msgbuf->used = 0;
+    }
+  else
+    {
+      msgbuf = g_MSGBUF_STACK.top();
+      g_MSGBUF_STACK.pop();
+    }
+
+  return msgbuf;
+}
+
+fuse_msgbuf_t*
+msgbuf_alloc_memonly()
+{
+  int rv;
+  fuse_msgbuf_t *msgbuf;
+  std::lock_guard<std::mutex> lck(g_MUTEX);
+
+  if(g_MSGBUF_STACK.empty())
+    {
+      msgbuf = (fuse_msgbuf_t*)malloc(sizeof(fuse_msgbuf_t));
+
+      msgbuf->pipefd[0] = -1;
+      msgbuf->pipefd[1] = -1;
       msgbuf->mem  = (char*)malloc(rv);
       msgbuf->size = rv;
       msgbuf->used = 0;

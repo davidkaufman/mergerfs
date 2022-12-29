@@ -21,5 +21,9 @@
 #include "fuse_msgbuf.h"
 
 void           msgbuf_bufsize(const uint32_t size);
+std::size_t    msgbuf_bufsize();
+
 fuse_msgbuf_t* msgbuf_alloc();
+fuse_msgbuf_t* msgbuf_alloc_memonly();
+
 void           msgbuf_free(fuse_msgbuf_t *msgbuf);
